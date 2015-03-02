@@ -1,0 +1,408 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <title>Minesweeper</title>
+        <script src="phaser.min.js"></script>
+    </head>
+    <body>
+    <script type="text/javascript">
+
+
+    var game = new Phaser.Game(800, 600, Phaser.AUTO, '', { preload:  preload, create: create });
+
+    //constants
+    var SCREENSIZE = 500;
+    var SQUARESIZE = 20;
+    
+
+    //changes depending on difficulty
+    var boardSize  = 16;
+    var numOfBombs = 16;
+
+    //game elements
+    var instructions;
+    var background;
+    var gameboard;
+    var board;
+
+    //other
+    var gamePaused = true;
+    var downKey;
+    
+    //arrays of tiles
+    var underTiles = [];
+    var overTiles  = [];
+    var alreadySearched = []; 
+
+    function preload () {
+        game.load.image('underSquare',  'underSquare.jpg');
+        game.load.image('overSquare',   'overSquare.jpg');
+        game.load.image('flag',         'flag.png');
+        game.load.image('bomb',         'bomb.png');
+        game.load.image('youWin',       'youWin.jpg');
+        game.load.image('youLose',      'youLose.jpg');
+        game.load.image('restartButton','restartButton.jpg');
+        game.load.image('easyButton',   'easy.png');
+        game.load.image('mediumButton', 'medium.png');
+        game.load.image('hardButton',   'hard.png');
+        game.load.image('title',        'title.jpg');
+        game.load.image('instructions', 'instructions.png');
+        game.load.image('background',   'background.jpg'); 
+    }
+
+    function create () {
+
+        //draw instructions and other game elements, and map the down key
+        refreshGamEelements();
+        instructions = game.add.button(game.world.centerX, game.world.centerY, 'instructions', closeInstructions)
+        instructions.anchor.setTo(0.5, 0.5);
+        downKey = game.input.keyboard.addKey(Phaser.Keyboard.DOWN);        
+    }
+
+    function refreshGamEelements() {
+
+        // redraw all of the UI elements
+        background = game.add.sprite(0, 0, 'background');
+        
+        gameboard = new Phaser.Rectangle(
+            (background.width - (boardSize * SQUARESIZE))/2, 
+            (background.height - (boardSize * SQUARESIZE))/2, 
+            boardSize * SQUARESIZE, 
+            boardSize * SQUARESIZE);
+        
+        board = new Board(game);
+
+        var bumper = 30;
+
+        var restartButton = game.add.button(
+            gameboard.x + gameboard.width + bumper, game.world.centerY, 'restartButton', restartGame, this);
+        restartButton.anchor.setTo(0, 0.5);
+
+        var easyButton = game.add.button(gameboard.x - bumper, 270, 'easyButton', selectDifficulty);
+        easyButton.anchor.setTo(1, 0.5);
+        easyButton.name = 0;
+        
+        var mediumButton = game.add.button(gameboard.x - bumper, 330, 'mediumButton', selectDifficulty);
+        mediumButton.anchor.setTo(1, 0.5);
+        mediumButton.name = 1;
+
+        var hardButton = game.add.button(gameboard.x - bumper, 390, 'hardButton', selectDifficulty);
+        hardButton.anchor.setTo(1, 0.5);
+        hardButton.name = 2;
+
+        var title = game.add.sprite(game.world.centerX, 50, 'title');
+        title.anchor.setTo(0.5, 0.5);
+    }
+
+    function closeInstructions() {
+
+        //close instructions and pause game
+        instructions.visible = false;
+        gamePaused = false;
+    }
+
+    function selectDifficulty(button) {
+
+        //switch difficulty from easy, medium, and hard
+        switch(button.name) {
+            case 0:
+                boardSize = 9;
+                numOfBombs = 10;
+                break;
+            case 1:
+                boardSize = 16;
+                numOfBombs = 16;
+                break;
+            case 2:
+               boardSize = 20;
+                numOfBombs = 20; 
+                break;
+        }
+        restartGame();
+    }
+
+    function restartGame() {
+        refreshGamEelements();
+        board.reset();
+        gamePaused = false;
+    }
+
+    function winGame() {
+        youWin = game.add.sprite(game.world.centerX, game.world.centerY, 'youWin');
+        youWin.anchor.setTo(0.5, 0.5);
+        gamePaused = true;
+    }
+
+    function loseGame() {
+        youLose = game.add.sprite(game.world.centerX, game.world.centerY, 'youLose');
+        youLose.anchor.setTo(0.5, 0.5);
+        gamePaused = true;
+    }
+
+    var Board = function (game) {
+        this.game = game;
+        this.solveUnderLayer();
+        this.drawUnderLayer(game);
+        this.drawOverLayer(game);
+    }
+
+
+    Board.prototype.solveUnderLayer = function () {
+        //0 = blank tile
+        //any number = number tile
+        //-1 = bomb
+        
+        // fill array with blanks (0's)
+        for (var i = 0; i < boardSize * boardSize; i++) {
+            underTiles[i] = 0;
+        }
+
+        // put bombs in array (-1's)
+        bombCount = 0;
+        while (bombCount != numOfBombs) {
+            var rand = Math.floor((Math.random() * boardSize * boardSize) + 1);
+            if (underTiles[rand] != -1) {
+                underTiles[rand] = -1;
+                bombCount++;
+            }
+        }
+
+        // count the number of surrounding tiles have bombs (1 - 8)
+        for (var i = 0; i < boardSize * boardSize; i++) {
+            if (underTiles[i] == -1) {
+
+                var leftOpen = false;
+                var rightOpen = false;
+                var topOpen = false;
+                var bottomOpen = false;
+
+                if (i % boardSize != 0) leftOpen = true;
+                if ( (i + 1) % boardSize != 0 ) rightOpen = true;
+                if (i - boardSize >= 0) topOpen = true;
+                if (i + boardSize < boardSize * boardSize) bottomOpen = true;
+
+                if (leftOpen && underTiles[i - 1] != -1) { //left
+                    underTiles[i - 1] ++;            
+                }           
+                if (rightOpen && underTiles[i + 1] != -1) { //right
+                    underTiles[i + 1] ++;            
+                }          
+                if (topOpen && underTiles[i - boardSize] != -1) { //top
+                    underTiles[i - boardSize] ++;    
+                }    
+                if (bottomOpen && underTiles[i + boardSize] != -1) { //bottom
+                    underTiles[i + boardSize] ++;    
+                }
+                if (leftOpen && topOpen && underTiles[(i - boardSize) - 1] != -1) { //upper left
+                    underTiles[(i - boardSize) - 1] ++;
+                } 
+                if (leftOpen && bottomOpen && underTiles[(i + boardSize) - 1] != -1) { //lower left
+                    underTiles[(i + boardSize) - 1] ++;  
+                } 
+                if (rightOpen && topOpen && underTiles[(i - boardSize) + 1] != -1) { //upper right
+                    underTiles[(i - boardSize) + 1] ++;    
+                } 
+                if (rightOpen && bottomOpen && underTiles[(i + boardSize) + 1] != -1) { //lower right
+                    underTiles[(i + boardSize) + 1] ++; 
+                }
+            }
+        }
+    }
+
+    Board.prototype.drawUnderLayer = function () {
+        var distanceFromTop;
+        var distanceFromLeft;
+        var currentTile = 0;
+
+        //draw the bottom layer of squares that are to be revealed throughout the game
+        for (distanceFromTop = 0; distanceFromTop < boardSize * SQUARESIZE; distanceFromTop += SQUARESIZE) {
+            for (distanceFromLeft = 0; distanceFromLeft < boardSize * SQUARESIZE; distanceFromLeft += SQUARESIZE) {
+                //draw blank square
+                var square = this.game.add.sprite(
+                    gameboard.x + distanceFromLeft, 
+                    gameboard.y + distanceFromTop, 'underSquare');
+
+                //draw numbers
+                if (underTiles[currentTile] > 0) {
+                    var style = { font: "15px Arial", fill: "#001F29", align: "center" };
+                    this.game.add.text(square.x + 5, square.y + 2, underTiles[currentTile], style);
+                }
+                
+                //draw bombs
+                else if (underTiles[currentTile] == -1) {
+                    this.game.add.sprite(square.x, square.y, 'bomb');
+                }
+
+                currentTile++;
+
+                
+                
+            }
+        }
+    }
+
+    Board.prototype.drawOverLayer = function () {
+
+        //draw the top layer of squares that will be removed to reveal the lower layer throughout the game
+        for (distanceFromTop = 0; distanceFromTop < boardSize * SQUARESIZE; distanceFromTop += SQUARESIZE) {
+            for (distanceFromLeft = 0; distanceFromLeft < boardSize * SQUARESIZE; distanceFromLeft += SQUARESIZE) {
+                
+                //draw blank squares
+                var square = this.game.add.sprite(
+                    gameboard.x + distanceFromLeft, 
+                    gameboard.y + distanceFromTop, 'overSquare');
+                square.inputEnabled = true;
+                square.events.onInputDown.add(this.handleSquareClicked, this, square);
+                square.flagged = false;
+                overTiles.push(square);
+            }
+        }      
+    }
+
+    Board.prototype.reset = function () {
+        //reset all arrays
+        underTiles = [];
+        overTiles = [];
+        alreadySearched = [];
+
+        //draw squares
+        board.solveUnderLayer();
+        board.drawUnderLayer();
+        board.drawOverLayer();
+    }
+
+    Board.prototype.handleSquareClicked = function (clickedSquare) {
+        
+        //if game is paused, don't allow clicking
+        if (gamePaused) return;
+
+        //figure out which space was clicked
+        for (var i = 0; i < overTiles.length; i++) {
+            if (clickedSquare == overTiles[i]) {
+                var clickedSpace = i;
+                break;
+            }
+        }
+
+        //if clicked an already revealed space
+        if (!overTiles[clickedSpace].visible || overTiles[clickedSpace].flagged) return;
+
+        //if clicked while holding down DOWNARROW for flag
+        else if (downKey.isDown) this.handleFlagPlacement(clickedSpace);
+
+        //if clicked bomb
+        else if (underTiles[clickedSpace] == -1) this.handleBombClicked();
+
+        //if clicked number space
+        else if (underTiles[clickedSpace] > 0) this.handleNumberClicked(clickedSpace);
+
+        //if clicked blank space
+        else if (underTiles[clickedSpace] == 0) this.handleBlankSpaceClicked(clickedSpace);
+
+        this.checkForVictory();
+    }
+
+    Board.prototype.handleFlagPlacement = function (clickedSpace) {
+
+        //place flag image and make flagged = true
+        game.add.sprite(overTiles[clickedSpace].x, overTiles[clickedSpace].y, 'flag');
+        overTiles[clickedSpace].flagged = true;
+    }
+
+    Board.prototype.handleBombClicked = function () {
+
+        //reveal all bombs except flagged ones to end the game
+        for (var i = 0; i < underTiles.length; i++) {
+            if (underTiles[i] == -1 && !overTiles[i].flagged) {
+                overTiles[i].visible = false;
+            }
+        }
+        loseGame();
+    }
+
+    Board.prototype.handleNumberClicked = function (clickedSpace) {
+
+        //reveal that numbered space
+        overTiles[clickedSpace].visible = false;
+    }
+
+    Board.prototype.handleBlankSpaceClicked = function (i) {
+
+        //reveal all spaces out to numbered spaces
+        overTiles[i].visible = false;
+
+        var leftOpen   = false;
+        var rightOpen  = false;
+        var topOpen    = false;
+        var bottomOpen = false;
+
+        if (i % boardSize != 0) leftOpen = true;
+        if ( (i + 1) % boardSize != 0 ) rightOpen = true;
+        if (i - boardSize >= 0) topOpen = true;
+        if (i + boardSize < boardSize * boardSize) bottomOpen = true;
+
+        if (leftOpen)   this.expandBlankSpace(i - 1);                 
+        if (rightOpen)  this.expandBlankSpace(i + 1);                  
+        if (topOpen)    this.expandBlankSpace(i - boardSize);     
+        if (bottomOpen) this.expandBlankSpace(i + boardSize);  
+        if (leftOpen && topOpen)     this.expandBlankSpace((i - boardSize) - 1);
+        if (leftOpen && bottomOpen)  this.expandBlankSpace((i + boardSize) - 1); 
+        if (rightOpen && topOpen)    this.expandBlankSpace((i - boardSize) + 1);
+        if (rightOpen && bottomOpen) this.expandBlankSpace((i + boardSize) + 1);
+    }
+
+    Board.prototype.expandBlankSpace = function (index) {
+
+        //this is the recursive helper function for handleBlankSpaceClicked
+        if (!overTiles[index].flagged) {
+            overTiles[index].visible = false;
+        } 
+        if (underTiles[index] == 0 && indexOf.call(alreadySearched, index) === -1) {
+            alreadySearched.push(index);
+            this.handleBlankSpaceClicked(index); 
+        }
+    }
+
+    Board.prototype.checkForVictory = function () {
+
+        //loop through board and check if all squares are revealed or flagged
+        var i;
+        for (i = 0; i < overTiles.length; i++) {
+            if (overTiles[i].visible && !overTiles[i].flagged) break;
+        }
+        if (i == overTiles.length) {
+            winGame();
+        }
+    }
+
+    // http://stackoverflow.com/questions/1181575/javascript-determine-whether-an-array-contains-a-value
+    var indexOf = function(needle) {
+        if(typeof Array.prototype.indexOf === 'function') {
+            indexOf = Array.prototype.indexOf;
+        } else {
+            indexOf = function(needle) {
+                var i = -1, index = -1;
+                for(i = 0; i < this.length; i++) {
+                    if(this[i] === needle) {
+                        index = i;
+                        break;
+                    }
+                }
+                return index;
+            };
+        }
+    
+        return indexOf.call(this, needle);
+    };
+
+
+
+
+
+
+    </script>
+
+    </body>
+    
+</html>
